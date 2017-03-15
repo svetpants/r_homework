@@ -1,0 +1,240 @@
+---
+title: "R Homework"
+author: "Svetlana Mikheyenok"
+date: "February 26, 2017"
+output:
+  html_document:
+    toc: yes
+  pdf_document:
+    toc: yes
+---
+## Introduction 
+
+Here I will go through the 'nycflights13' package. 
+1. The first steps will consist of cleaning the data at hand from which point I go on to mess with things I find interesting. 
+2. Brief explanations are provided below the headers for each piece of the exploratory data analysis section. I designed it in a way leading from interests to the question at hand introduced within the modelling section.  
+3. Supplementary feature engineering was incorporated once again prior to initializing a machine learning model for whether a flight would be late by more than 15 minutes at the destination.
+
+```{r, echo=TRUE, message=FALSE, warning=FALSE}
+
+rm(list=ls())
+library(dplyr)
+library(ggplot2)
+library(data.table)
+library(nycflights13)
+library(pander)
+flights <- data.table(nycflights13::flights)
+
+```
+## Feature Engineering  
+First I removed variables which will not be affected/needed/used in this context including NA responses. Once I removed the NA's from the entire data set, the observation count dropped from `r formatC(nrow(flights),format="d",big.mark=",")` to `r formatC(nrow(na.omit(flights)),format="d",big.mark=",")`. Also, I formatted a few of the variables to be more user friendly in our case.  
+```{r, echo=TRUE, message=FALSE, warning=FALSE, results="hide"}
+flights$arr_time <- NULL 
+flights$sched_arr_time <- NULL
+flights$flight <- NULL 
+flights$tailnum <- NULL 
+flights$date <- flights$time_hour
+flights$date_month <- format.Date(flights$time_hour,"%m")
+flights$time_hour<-format.Date(flights$time_hour,"%Y-%m-%d")
+flights[,weekday:=format.Date(time_hour,"%A")]
+flights<-na.omit(flights)
+```
+
+## Exploratory Data Analysis
+
+##### Shortest flight per month 
+This short flight is from New Jersey(EWR) to Connecticut(BDL) and can take over 3 hours to drive with traffic. It only occurred 2 times in the whole year: once in January and once again in April.
+```{r, echo=TRUE, message=FALSE, warning=FALSE}
+flights[!is.na(air_time),min(air_time),by=date_month][order(date_month)]
+flights[air_time==20]
+```
+
+##### Average flight per destination 
+On the same wavelength as before, I checked to see what the average flight time was for each destination point. 20 minutes to Connecticut (BDL) no longer seemed to be so out of the ordinary considering the average time to this destination point is around 25 minutes. However, on the other side of the spectrum Honolulu (HNL) has an average flight time of about 617 minutes ~ 10 hours and 17 minutes. 
+```{r, echo=TRUE, message=FALSE, warning=FALSE}
+AFD <- flights[, mean(air_time, na.rm = TRUE), by = dest]
+minAFD <- AFD[, min(V1, na.rm = TRUE)]
+AFD[order(V1)]
+```
+
+##### Number of flights to San Francisco / From NY > SF 
+From the information at hand we have `r formatC(as.numeric(flights[dest == 'SFO', .N]),format="d",big.mark=",")` flights to San Francisco for the Y2013. 
+Out of all these flights, 61.56% (`r formatC(as.numeric(flights[dest == 'SFO' & origin == 'JFK', .N]), format='d',big.mark=",")` ) are originated from New York.
+```{r, echo=TRUE, message=FALSE, warning=FALSE}
+flights[dest == 'SFO', .N]
+flights[dest == 'SFO' & origin == 'JFK', .N]
+```
+
+##### Average departure and arrival delay by Origin
+Per this graph we can see that if you are running late to the airport, the best flight to catch would be from New Jersey (EWR) because their average delay times are the longest, actually for both arrivals and departures. Whereas the 2 airports in New York are very similar in such delays. 
+```{r, echo=TRUE, message=FALSE, warning=FALSE}
+Avg_Delay <- flights[, list(arrival = mean(arr_delay, na.rm = TRUE),departure = mean(dep_delay, na.rm = TRUE)), 
+                     by = origin]
+ggplot(Avg_Delay, aes(x = departure, y = arrival, col=origin)) + geom_count()
+```
+
+##### The number of flights per the day of the week in October 
+Considering my birthday month is in October, I was interested to see how many flights took place Monday through Sunday. Throughouth the whole month of October, there were only 3 that took place on my actual birthday October 31st. If I was in New York, I could have made my way only to Puerto Rico from this data set as all three airports are located in Puerto Rico: Mercedita (PSE), San Juan (SJU) and Aquadilla (BQN).
+```{r, echo=TRUE, message=FALSE, warning=FALSE}
+ggplot(flights[date_month==10], aes(weekday, col=carrier)) + geom_bar()
+(flights[date == "2013-10-31"])
+count(flights[date == "2013-10-31"])
+```
+
+##### Top 3 destination points from each of the 3 departure airports: EWR, JFK and LGA 
+The most popular destination points out of all three are ORD - Chicago, ATL - Atlanta and LAX - Los Angeles. 
+```{r, echo=TRUE, message=FALSE, warning=FALSE}
+flights[,.N,by=dest][order(-N)][1:3]
+```
+
+##### Top destination points from each starting point (EWR, JFK and LGA)
+This is essentially 3 graphs reflecting the number of flights to the top destination points by each carrier. Granted the large share of flights by UA from EWR to SFO, I'm surprised that there were no flights from EWR on October 31st (as previously checked).
+```{r, echo=TRUE, message=FALSE, warning=FALSE}
+ggplot(flights[dest%in%union(union(as.vector(flights[origin=="EWR",.N,by=dest][order(-N)][1:3]$dest),
+                                   as.vector(flights[origin=="LGA",.N,by=dest][order(-N)][1:3]$dest)),
+                             as.vector(flights[origin=="JFK",.N,by=dest][order(-N)][1:3]$dest))], 
+       aes(dest, fill = carrier)) + geom_bar() +facet_grid(.~origin)
+```
+
+##### Average temperature at noon in EWR, JFK and LGA for each month
+In each of the graphs we can see that the the hottest time of the year was around July with temperature averaging between 70 and 80 degrees fahrenheit at noon time. The coldest time of the year for each location was end of January / beginning of February with conditions in the 30's (Fahrenheit). 
+```{r, echo=TRUE, message=FALSE, warning=FALSE}
+weather <- data.table(weather)
+ggplot(weather[,mean(temp,na.rm=T),by=.(origin,month)],aes(x=month,y=V1,fill=V1))+
+  geom_col()+facet_grid(.~origin)+
+  scale_fill_gradient2(midpoint=65,low="blue",mid="yellow", high="red" )+
+  ylab("Temperature")+ggtitle("Average Noon Temp per Origin")
+```
+
+Lastly to lead into modeling, I checked out a general summary of the departure delay and arrival delay variable. These two are very similiar to one another and this makes perfect sense considering if the departing flight is  delayed it in turn will have a delayed arrival. However, it looks like the pilots make up some air time to get to the destination quicker.  
+```{r}
+pander(summary(flights$dep_delay))
+pander(summary(flights$arr_delay))
+
+```
+
+
+
+## Model Predicting 
+
+#### Additional Data Cleaning 
+I removed variables that would not play a part in the modeling process. The destination variable had too many different outputs to use as a factor and therefore I went online to find information for which State was representative of each of the airports through their IATA code. The English wikipedia page had headers associated to each State, however the German page had a separte column specifically to specify this necessary information. With this at hand, I pullled the information and merged it into a final data frame from which the train and test set were designed. 
+
+```{r, echo=TRUE, message=FALSE, warning=FALSE}
+# install.packages("MUCflights",dependencies = T)
+# install.packages("RSQLite")
+# install.packages("Rcpp")
+library(XML)
+library(RSQLite)
+library(Rcpp)
+library(MUCflights)
+library(randomForest)
+air<-data.table((airports))
+modeling <- subset(flights, select=c(dest, month, dep_time, 
+                                     dep_delay, arr_delay, carrier, origin, 
+                                     distance, hour, minute, weekday))
+
+air <- readHTMLTable(readLines('https://de.wikipedia.org/wiki/Liste_der_Verkehrsflugh%C3%A4fen_in_den_Vereinigten_Staaten'),
+                     which = 2, header = TRUE, stringsAsFactors = FALSE)
+air$`Bundesstaat / Territorium`<-gsub('.*[[:space:]]',"" ,air$`Bundesstaat / Territorium`)
+colnames(air)<-c("name","IATA","ICAO","date23r23r","city","state")
+air<-data.table(air)
+
+df<-merge(modeling,air[,.(IATA,state)],by.x="dest",by.y="IATA",all.X=T,all.Y=T,sort=F)
+
+df$dest <- as.factor(df$dest)
+df$month <- as.factor(df$month)
+df$dep_time <- as.numeric(df$dep_time)
+df$carrier <- as.factor(df$carrier)
+df$origin <- as.factor(df$origin)
+df$weekday <- as.factor(df$weekday)
+df$DestState <- as.factor(df$state)
+df$gt15 <- as.factor(ifelse(df$arr_delay > 15,1,0))
+df$arr_delay <- NULL
+df$state <- NULL
+df$dep_time<-NULL
+
+
+set.seed(1234)
+N1<-nrow(df)
+vt<-sample(1:N1,0.6*N1)
+d_train<-df[vt,]
+d_vt<-df[-vt,]
+N2<-nrow(d_vt)
+t<-sample(1:N2,0.5*N2)
+d_valid<-d_vt[t,]
+d_test<-d_vt[-t,]
+
+library(h2o)
+h2o.init()
+h2o.removeAll()
+```
+
+```{r, message=FALSE, warning=FALSE, include=FALSE}
+dx_train <- as.h2o(d_train)  
+dx_valid<- as.h2o(d_valid)  
+dx_test <- as.h2o(d_test)
+
+colnames(dx_train)
+```
+
+
+##### Random Forests including Departure Delay 
+The confusion matrix is indicative of True Positive, False Positive, True Negative and False negative results and is represented for all 3 of the models. In the first model we include the departure delay variable and as explained before, it provides a good outlook for arrival delay. This provides a good explanation behing such high final performance results: similar to that of the training set. 
+
+* Training Performance (AUC): 0.9086
+* Test Performance (AUC): 0.9135
+```{r, message=FALSE, warning=FALSE, include=FALSE}
+h2orf1<-h2o.randomForest(x=colnames(dx_train)[-11],y="gt15",training_frame = dx_train,validation_frame = dx_valid,ntree=100,seed=1234)
+h2o.auc(h2orf1)
+```
+
+```{r, echo=TRUE, message=FALSE, warning=FALSE}
+h2opred1<-h2o.performance(h2orf1,newdata=dx_test)
+pander(h2o.confusionMatrix(h2opred1))
+h2o.auc(h2opred1)
+h2o.varimp(h2orf1)
+```
+
+#### Random Forests without Departure Delay 
+I wanted to see how much the model would alter once I removed the departure delay variable. Although the final results decreased, the model was still good providing the following performance results: 
+
+* Training Performance (AUC): 0.7365
+* Test Performance (AUC): 0.7201
+```{r, message=FALSE, warning=FALSE, include=FALSE}
+h2orf2<-h2o.gbm(x=colnames(dx_train)[-11][-3],y="gt15",training_frame = dx_train,validation_frame = dx_valid,ntree=100,seed=1234)
+h2o.auc(h2orf2)
+```
+```{r, echo=TRUE, message=FALSE, warning=FALSE}
+h2opred2<-h2o.performance(h2orf2,newdata=dx_test)
+pander(h2o.confusionMatrix(h2opred2))
+h2o.auc(h2opred2)
+h2o.varimp(h2orf2)
+```
+
+#### GBM 
+The final performance results of this model proved to be slightly better than either of the two Random Forests.
+
+* Training Performance (AUC): 0.9285
+* Test Performance (AUC): 0.9207
+```{r, message=FALSE, warning=FALSE, include=FALSE}
+h2ogbm1<-h2o.gbm(nfolds=5,x=colnames(dx_train)[-11],y="gt15",training_frame = dx_train,validation_frame = dx_valid,ntree=100,seed=1234)
+h2o.auc(h2ogbm1)
+```
+
+```{r, echo=TRUE, message=FALSE, warning=FALSE}
+h2opredgbm<-h2o.performance(h2ogbm1,newdata=dx_test)
+pander(h2o.confusionMatrix(h2opredgbm))
+h2o.auc(h2opredgbm)
+h2o.varimp(h2ogbm1)
+```
+
+### FINAL RESULTS 
+* The best results in predicting if a flight will be late by more than 15 minutes at the destination is the GBM model. 
++ Therefore, the charged off prediction per the given data and models has a precision of approximately 92%. 
+
+* As discussed, the first Random Forest model shows that the variable with the most importance is the Departure Delay. 
++ Once this variable was removed in the second random forest model, the hour variable jumped to the top. 
+
+* With GBM, departure delay variable was yet again retained and again proved to be the top contributor of importance.
+
